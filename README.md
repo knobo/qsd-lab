@@ -12,7 +12,7 @@ setup on newer Ubuntu (see below).
 ## How it works
 
 ```
-~/.local/share/qsd-lab/<lab>/top.qcow2   (qcow2 backing chain: base.qcow2 <- snap-*.qcow2)
+~/.local/share/qsd-lab/<lab>/   base.qcow2 <- snap-*.qcow2 <- ... (active top, named in lab.json)
   -> qemu-storage-daemon --daemonize, FUSE export on <lab>/export.raw (raw view of the disk)
   -> mkfs.ext4 the first time
   -> fuse2fs export.raw <mountpoint>      (user-chosen empty directory)
