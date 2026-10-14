@@ -74,7 +74,7 @@ which only allows reading, mounting and unmounting
 `@{HOME}/.local/share/qsd-lab/*/export.raw`:
 
 ```
-@{HOME}/.local/share/qsd-lab/*/export.raw r,
+@{HOME}/.local/share/qsd-lab/*/export.raw rw,
 mount fstype=fuse options=(nosuid,nodev) options in (ro,rw,noatime,dirsync,nodiratime,noexec,sync) -> @{HOME}/.local/share/qsd-lab/*/export.raw,
 umount @{HOME}/.local/share/qsd-lab/*/export.raw,
 ```

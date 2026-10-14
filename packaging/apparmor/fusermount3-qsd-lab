@@ -2,11 +2,12 @@
 #
 # Ubuntu's fusermount3 profile only allows FUSE mounts on directories.
 # A qemu-storage-daemon FUSE export is mounted on top of a regular file,
-# so fusermount3 needs to read that file and mount on it. These rules only
+# so fusermount3 needs to open that file and mount on it. These rules only
 # cover the export file inside qsd-lab's data directory.
 #
 # Installed by scripts/install-apparmor.sh into /etc/apparmor.d/local/fusermount3.
 
-@{HOME}/.local/share/qsd-lab/*/export.raw r,
+# fusermount3 opens a regular-file mountpoint with O_WRONLY.
+@{HOME}/.local/share/qsd-lab/*/export.raw rw,
 mount fstype=fuse options=(nosuid,nodev) options in (ro,rw,noatime,dirsync,nodiratime,noexec,sync) -> @{HOME}/.local/share/qsd-lab/*/export.raw,
 umount @{HOME}/.local/share/qsd-lab/*/export.raw,

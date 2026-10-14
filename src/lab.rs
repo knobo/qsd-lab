@@ -162,7 +162,7 @@ impl Lab {
                     .args(["--blockdev", "driver=qcow2,node-name=disk,file=file0"])
                     .arg("--export")
                     .arg(format!(
-                        "type=fuse,id=exp0,node-name=disk,mountpoint={},writable=on",
+                        "type=fuse,id=exp0,node-name=disk,mountpoint={},writable=on,allow-other=off",
                         self.export().display()
                     ))
                     .arg("--chardev")
@@ -389,5 +389,39 @@ mod tests {
         lab.delete(&l).unwrap();
         assert!(Lab::load_all().is_empty());
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// Full chain with FUSE. Needs the AppArmor rule; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_chain() {
+        let mnt = std::env::temp_dir().join(format!("qsd-lab-mnt-{}", std::process::id()));
+        fs::create_dir_all(&mnt).unwrap();
+        let l = Log::default();
+        let name = format!("selftest-{}", std::process::id());
+        let mut lab = Lab::create(&name, &mnt, 1, &l).unwrap();
+        let res = (|| {
+            lab.start(&l)?;
+            assert!(lab.qsd_running() && lab.mounted());
+            fs::write(mnt.join("a.txt"), "one").map_err(|e| e.to_string())?;
+            lab.snapshot(&l)?;
+            fs::write(mnt.join("a.txt"), "two").map_err(|e| e.to_string())?;
+            lab.stop(&l)?;
+            assert!(!lab.qsd_running() && !lab.mounted());
+
+            let frozen = lab.chain(&l)?[1].file.clone();
+            lab.rollback(&frozen, &l)?;
+            lab.start(&l)?;
+            let text = fs::read_to_string(mnt.join("a.txt")).map_err(|e| e.to_string())?;
+            lab.stop(&l)?;
+            Ok::<_, String>(text)
+        })();
+        let _ = lab.stop(&l);
+        for line in l.lock().unwrap().iter() {
+            println!("{line}");
+        }
+        lab.delete(&l).unwrap();
+        fs::remove_dir(&mnt).unwrap();
+        assert_eq!(res.unwrap(), "one");
     }
 }
