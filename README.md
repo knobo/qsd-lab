@@ -30,7 +30,11 @@ QMP socket: `<lab>/qmp.sock`. Every QMP message is shown in the log in the GUI.
 - Roll back to an older snapshot (only when stopped). This puts a new overlay
   on top of the chosen snapshot.
 - Delete a lab. The mountpoint is never touched.
-- Log of all commands run and all QMP JSON sent and received.
+- Log of all commands run and all QMP JSON sent and received, colored by kind
+  and with a short explanation of what each command and QMP call does. Raw JSON
+  and the QMP handshake are hidden unless you turn them on.
+- Each lab keeps its history in `~/.local/share/qsd-lab/<lab>/events.log`
+  ("Lab history" tab); the "Session" tab shows everything since the app started.
 
 ### Snapshot semantics
 
@@ -56,6 +60,17 @@ Debian/Ubuntu package names:
 cargo run --release
 ```
 
+Install for the current user (binary in `~/.cargo/bin`, app launcher entry and
+icon under `~/.local/share`, no root):
+
+```sh
+./scripts/install.sh               # install or update
+./scripts/install.sh --uninstall   # remove; lab data is left alone
+```
+
+Labs keep running when the app is closed. The next time it starts, it picks
+them up again.
+
 ## AppArmor (Ubuntu 24.10 and later)
 
 On Ubuntu 24.10+, `fusermount3` is confined by AppArmor
@@ -70,7 +85,7 @@ Failed to mount FUSE session to export
 
 The fix is a narrow local rule,
 [`packaging/apparmor/fusermount3-qsd-lab`](packaging/apparmor/fusermount3-qsd-lab),
-which only allows reading, mounting and unmounting
+which only allows opening, mounting and unmounting
 `@{HOME}/.local/share/qsd-lab/*/export.raw`:
 
 ```

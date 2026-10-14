@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=qsd-lab
+GenericName=qemu-storage-daemon lab
+Comment=Experiment with qemu-storage-daemon: qcow2 chains, FUSE exports and live snapshots
+Exec=qsd-lab
+Icon=qsd-lab
+Terminal=false
+Categories=System;Emulator;
+Keywords=qemu;qcow2;snapshot;fuse;storage;
+StartupWMClass=qsd-lab

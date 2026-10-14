@@ -9,6 +9,7 @@ use crate::qmp;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,11 +17,44 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Shared, append-only log of commands, QMP traffic and errors shown in the UI.
-pub type Log = Arc<Mutex<Vec<String>>>;
+/// Log of commands, QMP traffic and errors. Every line is kept in memory for the
+/// session and, when `file` is set, appended to a lab's `events.log`.
+/// Line format: `YYYY-MM-DD HH:MM:SS <text>`.
+#[derive(Clone, Default)]
+pub struct Log {
+    lines: Arc<Mutex<Vec<String>>>,
+    file: Option<PathBuf>,
+}
 
-pub fn log(l: &Log, s: impl Into<String>) {
-    l.lock().unwrap().push(s.into());
+impl Log {
+    /// Same session log, also written to `file`.
+    pub fn to_file(&self, file: PathBuf) -> Log {
+        Log { lines: self.lines.clone(), file: Some(file) }
+    }
+
+    pub fn push(&self, s: &str) {
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let lines: Vec<String> = s.lines().map(|line| format!("{ts} {line}")).collect();
+        if let Some(file) = &self.file {
+            // The lab dir does not exist yet during create, nor after delete.
+            if let Ok(mut f) = fs::OpenOptions::new().append(true).create(true).open(file) {
+                let _ = f.write_all(lines.iter().map(|l| format!("{l}\n")).collect::<String>().as_bytes());
+            }
+        }
+        self.lines.lock().unwrap().extend(lines);
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        self.lines.lock().unwrap().clone()
+    }
+
+    pub fn clear(&self) {
+        self.lines.lock().unwrap().clear();
+    }
+}
+
+pub fn log(l: &Log, s: impl AsRef<str>) {
+    l.push(s.as_ref());
 }
 
 /// `~/.local/share/qsd-lab`. Fixed path because the AppArmor rule names it.
@@ -85,6 +119,10 @@ impl Lab {
 
     fn export(&self) -> PathBuf {
         self.file("export.raw")
+    }
+
+    pub fn events_log(&self) -> PathBuf {
+        self.file("events.log")
     }
 
     fn sock(&self) -> PathBuf {
@@ -312,10 +350,10 @@ fn run(cmd: &mut Command, l: &Log) -> Result<String, String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     // qemu-img info JSON is long; the chain table shows it anyway.
     if !stdout.trim().is_empty() && stdout.len() < 2000 {
-        log(l, stdout.trim_end().to_string());
+        log(l, stdout.trim_end());
     }
     if !stderr.trim().is_empty() {
-        log(l, stderr.trim_end().to_string());
+        log(l, stderr.trim_end());
     }
     if out.status.success() {
         Ok(stdout)
@@ -424,7 +462,7 @@ mod tests {
             Ok::<_, String>(text)
         })();
         let _ = lab.stop(&l);
-        for line in l.lock().unwrap().iter() {
+        for line in l.lines() {
             println!("{line}");
         }
         lab.delete(&l).unwrap();

@@ -1,7 +1,8 @@
 mod lab;
-mod qmp; // qmp.rs is written by the backend
+mod log_view;
+mod qmp;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32};
 use lab::{Image, Lab, Log, log};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +19,12 @@ struct App {
     confirm_delete: bool,
     problems: Vec<String>,
     log: Log,
+    /// Lines of the selected lab's events.log; shown instead of the session log when `show_history`.
+    history: Vec<String>,
+    show_history: bool,
+    explain: bool,
+    raw_json: bool,
+    handshake: bool,
     busy: Arc<AtomicBool>,
     dirty: Arc<AtomicBool>,
     ctx: egui::Context,
@@ -35,6 +42,11 @@ impl App {
             confirm_delete: false,
             problems: lab::prereq_problems(),
             log: Log::default(),
+            history: Vec::new(),
+            show_history: true,
+            explain: true,
+            raw_json: false,
+            handshake: false,
             busy: Arc::default(),
             dirty: Arc::default(),
             ctx,
@@ -54,11 +66,25 @@ impl App {
             self.selected = None;
         }
         self.refresh_chain();
+        self.refresh_history();
+    }
+
+    fn refresh_history(&mut self) {
+        self.history = self
+            .current()
+            .and_then(|l| std::fs::read_to_string(l.events_log()).ok())
+            .map(|s| {
+                let lines: Vec<&str> = s.lines().collect();
+                // ponytail: re-reads the whole file; tail it if logs get huge.
+                lines[lines.len().saturating_sub(5000)..].iter().map(|l| l.to_string()).collect()
+            })
+            .unwrap_or_default();
     }
 
     fn refresh_chain(&mut self) {
         self.chain = match self.current() {
-            Some(l) => l.chain(&self.log).unwrap_or_else(|e| {
+            // Throwaway log: refreshing the table is not an event worth recording.
+            Some(l) => l.chain(&Log::default()).unwrap_or_else(|e| {
                 log(&self.log, format!("ERROR: {e}"));
                 Vec::new()
             }),
@@ -71,19 +97,21 @@ impl App {
             self.selected = Some(name);
             self.confirm_delete = false;
             self.refresh_chain();
+            self.refresh_history();
         }
     }
 
     fn spawn(
         &self,
         title: &str,
+        lab_name: &str,
         f: impl FnOnce(&Log) -> Result<(), String> + Send + 'static,
     ) {
         if self.busy.swap(true, Ordering::SeqCst) {
             return;
         }
         let (log_, busy, dirty, ctx) = (
-            self.log.clone(),
+            self.log.to_file(lab::data_root().join(lab_name).join("events.log")),
             self.busy.clone(),
             self.dirty.clone(),
             self.ctx.clone(),
@@ -159,7 +187,7 @@ impl App {
             let mount = PathBuf::from(self.new_mount.trim());
             let size = self.new_size;
             self.selected = Some(name.clone());
-            self.spawn(&format!("create {name}"), move |log| {
+            self.spawn(&format!("create {name}"), &name.clone(), move |log| {
                 Lab::create(&name, &mount, size, log).map(|_| ())
             });
         }
@@ -193,22 +221,22 @@ impl App {
         ui.horizontal(|ui| {
             if !running && ui.add_enabled(!busy, egui::Button::new("Start")).clicked() {
                 let mut l = l.clone();
-                self.spawn(&format!("start {}", l.name), move |log| l.start(log));
+                self.spawn(&format!("start {}", l.name), &l.name.clone(), move |log| l.start(log));
             }
             if (running || mounted) && ui.add_enabled(!busy, egui::Button::new("Stop")).clicked() {
                 let l = l.clone();
-                self.spawn(&format!("stop {}", l.name), move |log| l.stop(log));
+                self.spawn(&format!("stop {}", l.name), &l.name.clone(), move |log| l.stop(log));
             }
             if ui.add_enabled(!busy, egui::Button::new("Snapshot")).clicked() {
                 let mut l = l.clone();
-                self.spawn(&format!("snapshot {}", l.name), move |log| l.snapshot(log));
+                self.spawn(&format!("snapshot {}", l.name), &l.name.clone(), move |log| l.snapshot(log));
             }
             let text = if self.confirm_delete { "Click again to confirm" } else { "Delete" };
             if stopped && ui.add_enabled(!busy, egui::Button::new(text)).clicked() {
                 if self.confirm_delete {
                     self.confirm_delete = false;
                     let l = l.clone();
-                    self.spawn(&format!("delete {}", l.name), move |log| l.delete(log));
+                    self.spawn(&format!("delete {}", l.name), &l.name.clone(), move |log| l.delete(log));
                 } else {
                     self.confirm_delete = true;
                 }
@@ -237,25 +265,31 @@ impl App {
         });
         if let Some(file) = rollback {
             let mut l = l.clone();
-            self.spawn(&format!("rollback {} to {file}", l.name), move |log| l.rollback(&file, log));
+            self.spawn(&format!("rollback {} to {file}", l.name), &l.name.clone(), move |log| l.rollback(&file, log));
         }
     }
 
     fn log_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.strong("Log");
-            if ui.button("Clear").clicked() {
-                self.log.lock().unwrap().clear();
+            ui.selectable_value(&mut self.show_history, true, "Lab history")
+                .on_hover_text("events.log of the selected lab, kept across sessions");
+            ui.selectable_value(&mut self.show_history, false, "Session")
+                .on_hover_text("Everything since the app started, all labs");
+            ui.separator();
+            ui.checkbox(&mut self.explain, "Explain");
+            ui.checkbox(&mut self.raw_json, "Raw JSON");
+            ui.checkbox(&mut self.handshake, "QMP handshake");
+            if !self.show_history && ui.button("Clear").clicked() {
+                self.log.clear();
             }
         });
+        let lines = if self.show_history { self.history.clone() } else { self.log.lines() };
+        let opts = (self.explain, self.raw_json, self.handshake);
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .stick_to_bottom(true)
-            .show(ui, |ui| {
-                for line in self.log.lock().unwrap().iter() {
-                    ui.label(RichText::new(line).monospace());
-                }
-            });
+            .show(ui, |ui| log_view::show(ui, &lines, opts));
     }
 }
 
@@ -274,6 +308,11 @@ impl eframe::App for App {
             self.reload();
         }
         let busy = self.busy.load(Ordering::SeqCst);
+        if busy {
+            // Follow the worker as it writes events.log.
+            self.refresh_history();
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+        }
 
         if !self.problems.is_empty() {
             egui::Panel::top("problems").show(ui, |ui| self.problems_ui(ui));
@@ -295,6 +334,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("qsd-lab")
+            .with_app_id("qsd-lab")
             .with_inner_size([1000.0, 700.0]),
         ..Default::default()
     };
