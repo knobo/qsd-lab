@@ -366,9 +366,14 @@ fn wait_until(l: &Log, what: &str, done: impl Fn() -> bool) -> Result<(), String
 mod tests {
     use super::*;
 
+    /// offline_chain changes HOME, which data_root() reads; tests must not overlap.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
     /// Offline path only (no FUSE): create, snapshot, rollback, delete.
     #[test]
     fn offline_chain() {
+        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let real_home = std::env::var("HOME").unwrap();
         let home = std::env::temp_dir().join(format!("qsd-lab-test-{}", std::process::id()));
         let mnt = home.join("mnt");
         fs::create_dir_all(&mnt).unwrap();
@@ -388,6 +393,7 @@ mod tests {
 
         lab.delete(&l).unwrap();
         assert!(Lab::load_all().is_empty());
+        unsafe { std::env::set_var("HOME", real_home) };
         fs::remove_dir_all(&home).unwrap();
     }
 
@@ -395,6 +401,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_chain() {
+        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mnt = std::env::temp_dir().join(format!("qsd-lab-mnt-{}", std::process::id()));
         fs::create_dir_all(&mnt).unwrap();
         let l = Log::default();
